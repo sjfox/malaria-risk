@@ -1,7 +1,7 @@
 library(sf)
 library(tidyverse)
 library(cowplot)
-
+library(weathermetrics)
 theme_set(theme_cowplot())
 
 set.seed(450123)
@@ -10,7 +10,7 @@ set.seed(450123)
 # county_month_temperature <- read_csv('processed-data/county-historic-temps.csv')
 
 ## Using Mathew's temperature data base
-library(weathermetrics)
+
 temperature_df <- read_csv('processed-data/fixed_tmp_data.csv')
 temperature_df |>
   filter(Year %in% c(2013:2022)) |>
@@ -19,8 +19,7 @@ temperature_df |>
   summarize_all(.funs=mean) |>
   gather(month, avg_temp, -FIPS) |>
   rename(fips= FIPS) |>
-  mutate(month = tolower(month),
-         avg_temp = fahrenheit.to.celsius(avg_temp)) -> county_month_temperature
+  mutate(avg_temp = fahrenheit.to.celsius(avg_temp)) -> county_month_temperature
 county_month_temperature
 
 # Read in the economic - mosquito relationship ----------------------------
@@ -237,6 +236,7 @@ county_month_temperature |>
                    exp( log(adult_survival) * 1/parasite_development)) / 
            (-log(adult_survival) * (1/human_rr))) -> county_parm_samples
 
+## Some NAs produced frmo really low temperatures
 county_parm_samples |> 
   mutate(rnot = ifelse(is.na(rnot) & avg_temp < 1, 0, rnot)) -> county_parm_samples
 
@@ -249,9 +249,10 @@ county_parm_samples |>
 
 load('processed-data/county_sf.rda')
 county_sf |>
-  left_join(county_month_rnot_summary , 
-            by = 'fips') |> filter(is.na(rnot_mean)) |> as_tibble() |> select(-geometry)
-  mutate(month = factor(month, levels= tolower(month.abb))) |> 
+  inner_join(county_month_rnot_summary , 
+            by = 'fips', multiple = 'all') |> 
+  filter(abbr != 'AK') |> 
+  mutate(month = factor(month, levels= month.abb)) |> 
   ggplot() +
     geom_sf(aes(fill = rnot_mean)) +
     facet_wrap(~month) +
@@ -259,13 +260,31 @@ county_sf |>
     labs(fill = bquote(R[0])) +
     theme_map() -> rnot_mean_month_map
 rnot_mean_month_map
-save_plot('figs/rnot_months_map.pdf', rnot_mean_month_map, base_height = 10, base_asp = 1.8, bg = 'white')
+save_plot('figs/rnot_mean_month_map.pdf', rnot_mean_month_map, base_height = 10, base_asp = 1.8, bg = 'white')
+
+county_sf |>
+  inner_join(county_month_rnot_summary , 
+             by = 'fips', multiple = 'all') |> 
+  filter(abbr != 'AK') |> 
+  mutate(month = factor(month, levels= month.abb)) |> 
+  ggplot() +
+  geom_sf(aes(fill = rnot_hi)) +
+  facet_wrap(~month) +
+  scale_fill_gradientn(colours = c('white', 'darkblue', 'yellow', 'red'), 
+                       values = scales::rescale(c(0, 1, 1.01, max(county_month_rnot_summary$rnot_hi))),
+                       na.value = 'lightgrey') +
+  labs(fill = bquote(R[0])) +
+  theme_map() -> rnot_hi_month_map
+rnot_hi_month_map
+save_plot('figs/rnot_hi_month_map.pdf', rnot_hi_month_map, base_height = 10, base_asp = 1.8, bg = 'white')
+
 
 
 save(county_parm_samples, county_month_rnot_summary, 
-     file = 'processed-data/2023-07-11_county-rnot-samples.rda')
+     file = 'processed-data/2023-07-13_county-monthly-rnot-estimates.rda')
 
-# R0 calculation questions ------------------------------------------------
+
+# Convert to singular R0 value based on avg of 6 max months for each samp --------
 # From perkins paper
 # Because temperature values were available for each location on a monthly basis, 
 ## we computed monthly values of R0 for each location and then used the mean of the 
@@ -273,10 +292,48 @@ save(county_parm_samples, county_month_rnot_summary,
 ## This approach was broadly consistent with the way in which a temperature suitability 
 ## index was used to inform mosquito occurrence probabilities by Kraemer and co-authors7.
 
+county_parm_samples |> 
+  group_by(fips, month) |> 
+  mutate(id = seq_along(avg_temp)) |> 
+  ungroup() |> 
+  select(fips, month, id, rnot) |>
+  group_by(fips, id) |> 
+  summarize(rnot = mean(head(sort(rnot, decreasing=T), 6))) -> county_single_rnot_samples
 
+county_single_rnot_samples |> 
+  group_by(fips) |> 
+  summarize(rnot_mean = mean(rnot),
+            rnot_lo = quantile(rnot, probs = 0.025),
+            rnot_hi = quantile(rnot, probs = 0.975)) -> county_single_rnot_summary
 
+county_sf |>
+  inner_join(county_single_rnot_summary ,
+             by = 'fips') |>
+  filter(abbr != 'AK') |> 
+  ggplot() +
+  geom_sf(aes(fill = rnot_mean)) +
+  scale_fill_gradient(low = 'white', high = 'darkblue', na.value = 'lightgrey') +
+  labs(fill = bquote(R[0])) +
+  theme_map() -> single_rnot_mean_map
+single_rnot_mean_map
+save_plot('figs/single_rnot_mean_map.pdf', single_rnot_mean_map, base_height = 5, base_asp = 1.8, bg = 'white')
 
+county_sf |>
+  inner_join(county_single_rnot_summary , 
+             by = 'fips') |> 
+  filter(abbr != 'AK') |> 
+  ggplot() +
+  geom_sf(aes(fill = rnot_hi)) +
+  scale_fill_gradientn(colours = c('white', 'darkblue', 'yellow', 'red'), 
+                       values = scales::rescale(c(0, 1, 1.01, max(county_single_rnot_summary$rnot_hi))),
+                       na.value = 'lightgrey') +
+  labs(fill = bquote(R[0])) +
+  theme_map() -> single_rnot_hi_map
+single_rnot_hi_map
+save_plot('figs/single_rnot_hi_map.pdf', single_rnot_hi_map, base_height = 5, base_asp = 1.8, bg = 'white')
 
+save(county_single_rnot_summary, county_single_rnot_samples, 
+     file = 'processed-data/2023-07-13_county-single-rnot-estimates.rda')
 # county_sf |>
 #   left_join(county_rnots |> 
 #               filter(month == 'Jul'), by = 'fips') |> 
