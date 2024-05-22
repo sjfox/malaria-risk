@@ -5,6 +5,7 @@
 - Run `get-county-gdp.R` to gather all of the county per capita GDP estimates from ACD
 - Run `calc-malaria-county-rnots.R` to calculate the R0s based on all of the data and parameter estimates gathered.
 - Run `posterior-malaria-rnots.R` to calculate the posterior distributions for R0 based on the prior distribution and the importations estimated.
+- Run `main-transmission-risk-fig.R` to make some maps and make sure everything worked correctly.
 - `calc-county-temperatures.R` is not needed if using Mathew's provided temperature data
 
 
