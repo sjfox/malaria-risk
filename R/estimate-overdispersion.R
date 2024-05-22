@@ -34,3 +34,6 @@ combos |>
     geom_line()
 
 
+combos
+
+summary(rnbinom(10000, mu = 0.0120, size = 10))
